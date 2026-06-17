@@ -20,11 +20,16 @@ import { runCommand } from "./lib/process.mjs";
 import {
   REQUIRED_COMMANDS,
   verifyContract,
-  formatContractReport
+  formatContractReport,
+  HELP_ENV
 } from "./lib/cli-contract.mjs";
 
+// Force plain, wide help output so Typer/Rich doesn't emit ANSI color codes or
+// wrap option lines mid-token (see lib/cli-contract.mjs for why).
+const HELP_PROCESS_ENV = { ...process.env, ...HELP_ENV };
+
 function kimiOnPath() {
-  const result = runCommand("kimi", ["--version"]);
+  const result = runCommand("kimi", ["--version"], { env: HELP_PROCESS_ENV });
   if (result.error && result.error.code === "ENOENT") {
     return false;
   }
@@ -34,11 +39,14 @@ function kimiOnPath() {
 
 /**
  * Fetch help text from the real `kimi` binary. Returns combined stdout+stderr
- * because some CLIs emit help on stderr. Returns "" if the command errored
- * (other than producing help).
+ * because some CLIs emit help on stderr. The HELP_ENV overrides force plain,
+ * wide output; the tokenizer additionally strips any ANSI that leaks through.
  */
 function fetchRealHelp(argv) {
-  const result = runCommand("kimi", argv, { maxBuffer: 10 * 1024 * 1024 });
+  const result = runCommand("kimi", argv, {
+    maxBuffer: 10 * 1024 * 1024,
+    env: HELP_PROCESS_ENV
+  });
   if (result.error) {
     throw result.error;
   }
@@ -55,7 +63,7 @@ function main() {
   }
 
   const version = (() => {
-    const result = runCommand("kimi", ["--version"]);
+    const result = runCommand("kimi", ["--version"], { env: HELP_PROCESS_ENV });
     return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || "unknown";
   })();
 

@@ -8,6 +8,14 @@
 // We verify against *help text* (the stable, documented contract) rather than
 // actually executing tasks, so the check is fast, offline, and never requires
 // authentication.
+//
+// IMPORTANT: kimi-cli renders help via Typer/Rich. The output contains ANSI
+// color escape codes and Rich box-drawing characters, and option lines wrap at
+// the terminal width. To match reliably we must (a) ask the CLI for plain, wide
+// output (NO_COLOR=1, TERM=dumb, COLUMNS=200), (b) strip any ANSI escapes that
+// leak through anyway, and (c) normalize whitespace before tokenizing. A naive
+// substring/whitespace tokenizer on the raw, colored, narrow output produces
+// false negatives (every flag glued to an escape code looks "missing").
 
 /**
  * The authoritative manifest of the `kimi` command surface this plugin
@@ -39,7 +47,7 @@ export const REQUIRED_COMMANDS = [
     requires: [
       { token: "--version", kind: "flag", note: "getKimiAvailability() runs `kimi --version`" },
       { token: "info", kind: "subcommand", note: "getKimiAuthStatus() runs `kimi info`" },
-      { token: "login", kind: "subcommand", note: "getKimiAuthStatus()/setup runs `kimi login`" },
+      { token: "login", kind: "subcommand", note: "getKimiAuthStatus() probes `kimi login --help`; setup suggests `!kimi login`" },
       { token: "--quiet", kind: "flag", note: "buildKimiArgs() always passes --quiet" },
       { token: "--yolo", kind: "flag", note: "buildKimiArgs() always passes --yolo" },
       { token: "--model", kind: "flag", note: "buildKimiArgs() passes --model <model> when set" },
@@ -61,24 +69,73 @@ export const REQUIRED_COMMANDS = [
 ];
 
 /**
- * Tokenize help text into a set of whitespace-delimited tokens, stripping the
- * common trailing punctuation that help formatters add (commas, etc.) and
- * splitting "--flag=VALUE" / "--flag, -f" style usage lines so individual
- * flags and short aliases are discoverable.
+ * Environment overrides that force `kimi` (Typer/Rich) to emit plain, wide help
+ * text: no ANSI color, a "dumb" terminal, and a wide column count so option
+ * lines do not wrap mid-token. Callers that invoke the real binary should merge
+ * this into the child process env. Exported so the test and the CI runner share
+ * exactly one definition.
+ */
+export const HELP_ENV = Object.freeze({
+  NO_COLOR: "1",
+  // Some Rich/Typer code paths still colorize unless this is also set.
+  TERM: "dumb",
+  // Wide enough that no required option line wraps.
+  COLUMNS: "200",
+  // Belt-and-suspenders: make sure nothing forces color back on.
+  FORCE_COLOR: "0"
+});
+
+/**
+ * Remove ANSI escape sequences (CSI color codes, etc.) from a string. Typer/Rich
+ * may emit these even when NO_COLOR is requested, and when glued to a flag (e.g.
+ * "\x1b[1;36m--version\x1b[0m") they make the flag undiscoverable.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripAnsi(text) {
+  // Matches CSI sequences like ESC[ ... <final-byte> and a few other escapes.
+  // eslint-disable-next-line no-control-regex
+  return String(text ?? "").replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b[@-Z\\-_]/g, "");
+}
+
+/**
+ * Normalize help text into a flat, ANSI-free, single-spaced form. This collapses
+ * the box-drawing layout and wrapped lines that Rich produces so that token
+ * matching is stable regardless of terminal width or color settings.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function normalizeHelp(text) {
+  return stripAnsi(text)
+    // Drop Rich box-drawing characters so they don't fuse with tokens.
+    .replace(/[─-╿]/g, " ")
+    // Collapse all whitespace (including newlines) to single spaces.
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Tokenize help text into a set of tokens, after stripping ANSI escapes and
+ * normalizing whitespace. Splits on whitespace and the separators help
+ * formatters use ("," "|" "/" parens/brackets) so individual flags and short
+ * aliases are discoverable even when printed as "--prompt,--command -p,-c" or
+ * "--thinking/--no-thinking".
  *
  * @param {string} helpText
  * @returns {Set<string>}
  */
 export function tokenizeHelp(helpText) {
   const tokens = new Set();
-  const text = String(helpText ?? "");
+  const text = normalizeHelp(helpText);
   // Split on whitespace and a few separators help formatters use.
   for (const raw of text.split(/[\s,|/()\[\]]+/)) {
     if (!raw) {
       continue;
     }
     // Drop trailing punctuation like "." or ":".
-    let token = raw.replace(/[.:;]+$/, "");
+    const token = raw.replace(/[.:;]+$/, "");
     if (!token) {
       continue;
     }
@@ -109,9 +166,11 @@ function requirementSatisfied(requirement, tokens) {
   }
   // Documented equivalences: the plugin passes the short/long forms below,
   // but kimi help may list the alternate spelling. Both forms are accepted
-  // because kimi-cli treats them as aliases for the same flag.
+  // because kimi-cli treats them as aliases for the same flag. (Verified against
+  // kimi-cli source: `--prompt/-p/--command/-c`, `--continue/-C`, `--model/-m`,
+  // `--version/-V` are all aliases of one option.)
   const equivalents = {
-    "-p": ["--print"],
+    "-p": ["--prompt", "--command", "-c"],
     "--continue": ["-C"],
     "--model": ["-m"],
     "--version": ["-V"]

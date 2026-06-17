@@ -5,50 +5,71 @@ import {
   REQUIRED_COMMANDS,
   verifyContract,
   tokenizeHelp,
-  formatContractReport
+  stripAnsi,
+  normalizeHelp,
+  formatContractReport,
+  HELP_ENV
 } from "../plugins/kimi/scripts/lib/cli-contract.mjs";
 import { runCommand } from "../plugins/kimi/scripts/lib/process.mjs";
 
-// A fake `kimi --help` fixture that mirrors the documented kimi-cli command
-// surface (subcommands + global run flags). This lets the contract test run
-// fully offline in CI without kimi installed. Keep this representative of real
-// `kimi --help` output, including the alias spellings kimi-cli prints.
+// A fake `kimi --help` fixture in the REAL Typer/Rich format: ANSI color escape
+// codes, Rich box-drawing borders, an "Options" panel where flags and their
+// short aliases are separated by spaces or commas, a "Commands" panel listing
+// subcommands, and at least one option whose description wraps onto a second
+// line. This proves the parser handles real-world output (it strips ANSI,
+// drops box-drawing, and normalizes whitespace) rather than only a clean fake.
+//
+// Captured/derived from real `kimi --help` (kimi-cli 1.44.0+). The `\x1b[...m`
+// sequences are genuine SGR color codes glued onto flag tokens, exactly as Rich
+// emits them when color is on — the case that broke the original naive parser.
+const C = "\x1b[1;36m"; // cyan bold (used by Rich for option/command names)
+const R = "\x1b[0m"; // reset
 const FAKE_TOP_LEVEL_HELP = `
-Usage: kimi [OPTIONS] COMMAND [ARGS]...
+ Usage: kimi [OPTIONS] COMMAND [ARGS]...
 
-  Kimi CLI - agentic coding in your terminal.
+ Kimi, your next CLI agent.
 
-Options:
-  -V, --version             Show version number and exit
-  -m, --model TEXT          Specify LLM model
-  --thinking / --no-thinking
-                            Enable or disable thinking mode
-  -C, --continue            Continue the previous session
-  -p, --print               Run in print mode (non-interactive)
-  --quiet                   Shortcut for --print --output-format text --final-message-only
-  -y, --yolo                Auto-approve all tool calls
-  --help                    Show this message and exit.
+╭─ Options ──────────────────────────────────────────────────────────────────╮
+│ ${C}--version${R}                    ${C}-V${R}                              Show version and exit.                  │
+│ ${C}--model${R}                      ${C}-m${R}     TEXT                     LLM model to use. Default: default       │
+│                                                                  model set in config file.               │
+│ ${C}--thinking${R}                          ${C}--no-thinking${R}           Enable thinking mode.                    │
+│ ${C}--continue${R}                   ${C}-C${R}                              Continue the previous session for the    │
+│                                                                  working directory. Default: no.         │
+│ ${C}--yolo${R},${C}--yes${R},${C}--auto-approve${R}  ${C}-y${R}              Automatically approve all actions.       │
+│ ${C}--prompt${R},${C}--command${R}           ${C}-p${R},${C}-c${R}   TEXT    User prompt to the agent. Default:       │
+│                                                                  prompt interactively.                   │
+│ ${C}--print${R}                                                     Run in print mode (non-interactive).     │
+│ ${C}--quiet${R}                                                     Alias for \`--print --output-format text   │
+│                                                                  --final-message-only\`.                  │
+│ ${C}--help${R}                       ${C}-h${R}                              Show this message and exit.              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ─────────────────────────────────────────────────────────────────╮
+│ ${C}login${R}    Login to your Kimi account.                                         │
+│ ${C}logout${R}   Logout from your Kimi account.                                       │
+│ ${C}term${R}     Run Toad TUI backed by Kimi Code CLI ACP server.                     │
+│ ${C}acp${R}      Run Kimi Code CLI ACP server.                                        │
+│ ${C}info${R}     Show version and protocol information.                               │
+│ ${C}export${R}   Export session data.                                                 │
+│ ${C}mcp${R}      Manage MCP server configurations.                                    │
+│ ${C}plugin${R}   Manage plugins.                                                      │
+│ ${C}vis${R}      Run Kimi Agent Tracing Visualizer.                                   │
+│ ${C}web${R}      Run Kimi Code CLI web interface.                                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
-Commands:
-  acp      Start a multi-session ACP server.
-  export   Export a session as a ZIP archive.
-  info     Display version and protocol information.
-  login    Authenticate to your Kimi account.
-  logout   Deauthenticate from your Kimi account.
-  mcp      Manage MCP server configurations.
-  plugin   Manage plugins (Beta).
-  term     Launch the Toad terminal UI.
-  vis      Launch the Agent Tracing Visualizer.
-  web      Start the Web UI server.
+ Documentation:        https://moonshotai.github.io/kimi-cli/
+ LLM friendly version: https://moonshotai.github.io/kimi-cli/llms.txt
 `;
 
 const FAKE_LOGIN_HELP = `
-Usage: kimi login [OPTIONS]
+ Usage: kimi login [OPTIONS]
 
-  Authenticate to your Kimi account.
+ Login to your Kimi account.
 
-Options:
-  --help  Show this message and exit.
+╭─ Options ──────────────────────────────────────────────────────────────────╮
+│ ${C}--json${R}            Emit OAuth events as JSON lines.                            │
+│ ${C}--help${R}            Show this message and exit.                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
 `;
 
 function fakeFetchHelp(argv) {
@@ -78,7 +99,21 @@ test("manifest covers exactly the kimi surface the companion uses", () => {
   }
 });
 
-test("verifyContract passes against a faithful fake kimi --help fixture", () => {
+test("stripAnsi removes SGR color codes glued to flag tokens", () => {
+  assert.equal(stripAnsi(`${C}--version${R}`), "--version");
+  assert.equal(stripAnsi("\x1b[0mplain\x1b[1;36m"), "plain");
+});
+
+test("normalizeHelp drops box-drawing and collapses wrapped lines", () => {
+  const normalized = normalizeHelp(FAKE_TOP_LEVEL_HELP);
+  assert.ok(!/[│╭╰─╮╯]/.test(normalized), "box-drawing chars should be gone");
+  assert.ok(!/\x1b/.test(normalized), "ANSI escapes should be gone");
+  // The wrapped "--quiet ... Alias for ..." description should still contain
+  // the flag as a discoverable token.
+  assert.ok(/ --quiet /.test(` ${normalized} `));
+});
+
+test("verifyContract passes against a realistic Typer/Rich fake help fixture", () => {
   const verification = verifyContract(fakeFetchHelp);
   assert.equal(
     verification.ok,
@@ -88,25 +123,38 @@ test("verifyContract passes against a faithful fake kimi --help fixture", () => 
   assert.deepEqual(verification.missing, []);
 });
 
-test("verifyContract accepts alias spellings (e.g. --print for -p)", () => {
-  // kimi prints `-p, --print`; tokenizer captures both, so -p is satisfied.
+test("tokenizer recovers flags/aliases from colored, comma-joined option lines", () => {
   const tokens = tokenizeHelp(FAKE_TOP_LEVEL_HELP);
-  assert.ok(tokens.has("-p"));
-  assert.ok(tokens.has("--print"));
+  // -p appears as part of "--prompt,--command -p,-c" (comma + color codes).
+  assert.ok(tokens.has("-p"), "-p must survive ANSI + comma joining");
+  assert.ok(tokens.has("--prompt"));
+  // --thinking is printed as "--thinking --no-thinking"; base token matches.
+  assert.ok(tokens.has("--thinking"));
   assert.ok(tokens.has("--version"));
   assert.ok(tokens.has("--continue"));
+  assert.ok(tokens.has("--yolo"));
+  // Subcommands come from the Commands panel.
+  assert.ok(tokens.has("info"));
+  assert.ok(tokens.has("login"));
 });
 
-test("verifyContract fails loudly when a required flag is dropped", () => {
-  // Simulate a future kimi-cli that removed --yolo.
+test("HELP_ENV forces plain, wide output", () => {
+  assert.equal(HELP_ENV.NO_COLOR, "1");
+  assert.equal(HELP_ENV.TERM, "dumb");
+  assert.equal(HELP_ENV.COLUMNS, "200");
+});
+
+test("verifyContract fails loudly when a required flag is genuinely absent", () => {
+  // Negative fixture: a future kimi-cli that removed --yolo (and its aliases)
+  // entirely. Drop the tokens from the option line so they truly vanish.
   const helpWithoutYolo = FAKE_TOP_LEVEL_HELP.replace(
-    /^\s*-y, --yolo.*$/m,
-    ""
+    /--yolo|--yes|--auto-approve/g,
+    "--gone"
   );
   const fetch = (argv) =>
     argv[0] === "login" ? FAKE_LOGIN_HELP : helpWithoutYolo;
   const verification = verifyContract(fetch);
-  assert.equal(verification.ok, false);
+  assert.equal(verification.ok, false, "should fail when --yolo is gone");
   assert.ok(
     verification.missing.some((m) => m.token === "--yolo"),
     "missing list should call out --yolo"
@@ -114,10 +162,15 @@ test("verifyContract fails loudly when a required flag is dropped", () => {
 });
 
 test("verifyContract fails loudly when a required subcommand is dropped", () => {
+  // Negative fixture: a future kimi-cli that removed the `info` subcommand.
+  // The command name is colorized (e.g. "\x1b[1;36minfo\x1b[0m"), so target the
+  // colored token rather than a plain word boundary.
   const helpWithoutInfo = FAKE_TOP_LEVEL_HELP.replace(
-    /^\s*info\s+Display.*$/m,
-    ""
+    `${C}info${R}`,
+    `${C}gone${R}`
   );
+  // Sanity: the rename actually removed the discoverable `info` token.
+  assert.ok(!tokenizeHelp(helpWithoutInfo).has("info"));
   const fetch = (argv) =>
     argv[0] === "login" ? FAKE_LOGIN_HELP : helpWithoutInfo;
   const verification = verifyContract(fetch);
@@ -136,9 +189,11 @@ test("verifyContract reports a fetch failure as missing, not a crash", () => {
 
 // Optional real-binary check: if `kimi` is installed on PATH, verify the live
 // command surface too. Skips gracefully (does NOT fail) when kimi is absent,
-// so `npm test` works in CI without kimi installed.
+// so `npm test` works in CI without kimi installed. Uses HELP_ENV so Typer/Rich
+// emits plain, wide output.
 test("real kimi CLI satisfies the contract (skipped if kimi absent)", (t) => {
-  const probe = runCommand("kimi", ["--version"]);
+  const helpEnv = { ...process.env, ...HELP_ENV };
+  const probe = runCommand("kimi", ["--version"], { env: helpEnv });
   const kimiMissing = probe.error && probe.error.code === "ENOENT";
   if (kimiMissing) {
     t.skip("kimi binary not found on PATH");
@@ -146,7 +201,10 @@ test("real kimi CLI satisfies the contract (skipped if kimi absent)", (t) => {
   }
 
   const fetchRealHelp = (argv) => {
-    const result = runCommand("kimi", argv, { maxBuffer: 10 * 1024 * 1024 });
+    const result = runCommand("kimi", argv, {
+      maxBuffer: 10 * 1024 * 1024,
+      env: helpEnv
+    });
     if (result.error) {
       throw result.error;
     }

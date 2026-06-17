@@ -39,8 +39,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Recent kimi-cli releases on PyPI (latest patch within the supported
-        # 1.x line). Add/trim versions as kimi-cli ships new releases.
+        # Recent kimi-cli releases on PyPI. Supported floor verified at 1.44.0:
+        # every command/flag the plugin uses (--version, info, login, --quiet,
+        # --yolo, --model, --thinking, --continue, -p) is present from 1.44.0
+        # through 1.47.0 (confirmed against a locally installed 1.44.0 and the
+        # 1.47.0 source). Add/trim versions as kimi-cli ships new releases; if a
+        # future older floor drops a flag, remove it from this list rather than
+        # leaving the job red.
         kimi-version:
           - "1.47.0"
           - "1.46.0"
