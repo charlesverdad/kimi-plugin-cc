@@ -1,5 +1,8 @@
 # kimi-plugin-cc
 
+[![CI](https://github.com/charlesverdad/kimi-plugin-cc/actions/workflows/ci.yml/badge.svg)](https://github.com/charlesverdad/kimi-plugin-cc/actions/workflows/ci.yml)
+[![kimi-cli compat](https://github.com/charlesverdad/kimi-plugin-cc/actions/workflows/kimi-cli-compat.yml/badge.svg)](https://github.com/charlesverdad/kimi-plugin-cc/actions/workflows/kimi-cli-compat.yml)
+
 Use Kimi CLI from inside Claude Code for code reviews or to delegate tasks to Kimi.
 
 This plugin is for Claude Code users who want an easy way to start using Kimi from the workflow
