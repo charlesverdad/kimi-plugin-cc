@@ -1,0 +1,35 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  agentshield:
+    name: AgentShield scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Run AgentShield scan
+        run: npx -y ecc-agentshield scan --path plugins/kimi --format json > agentshield-report.json
+
+      - name: Show report
+        if: always()
+        run: npx -y ecc-agentshield scan --path plugins/kimi
+
+      - name: Gate on medium+ findings
+        run: node .github/scripts/agentshield-gate.mjs agentshield-report.json medium
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentshield-report
+          path: agentshield-report.json
