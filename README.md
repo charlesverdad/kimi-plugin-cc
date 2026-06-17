@@ -22,13 +22,13 @@ they already have.
 Add the marketplace in Claude Code:
 
 ```
-/plugin marketplace add <your-org>/kimi-plugin-cc
+/plugin marketplace add charlesverdad/kimi-plugin-cc
 ```
 
 Install the plugin:
 
 ```
-/plugin install kimi@<your-org>-kimi
+/plugin install kimi@moonshotai-kimi
 ```
 
 Reload plugins:
@@ -260,3 +260,7 @@ That means:
 ### Will it use the same Kimi config I already have?
 
 Yes. If you already use Kimi, the plugin picks up the same configuration.
+
+## Credits
+
+This plugin is based on the [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) plugin. The architecture and design choices — including the command structure, the rescue/background-job model, and the CLI runtime integration — were adapted from that project. Thanks to its authors for the original work.
