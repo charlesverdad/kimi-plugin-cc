@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Use Kimi CLI from Claude Code to review code or delegate tasks.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "engines": {
     "node": ">=18.18.0"
   },
