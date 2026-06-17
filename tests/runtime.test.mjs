@@ -55,7 +55,12 @@ test("setup --json reports ready when fake kimi is installed and authenticated",
   assert.equal(payload.ready, true);
   assert.equal(payload.kimi.available, true);
   assert.equal(payload.auth.loggedIn, true);
-  assert.deepEqual(payload.nextSteps, []);
+  // The stop-time review gate is off by default, so the only remaining next
+  // step is the optional suggestion to enable it.
+  assert.equal(payload.reviewGateEnabled, false);
+  assert.deepEqual(payload.nextSteps, [
+    "Optional: run `/kimi:setup --enable-review-gate` to require a fresh review before stop."
+  ]);
 });
 
 test("setup --json reports not ready when authentication is missing", () => {

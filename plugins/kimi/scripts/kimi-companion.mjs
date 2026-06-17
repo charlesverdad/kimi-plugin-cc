@@ -21,6 +21,7 @@ import {
   resolveResultJob,
   sortJobsNewestFirst
 } from "./lib/job-control.mjs";
+import { getKimiAvailability } from "./lib/kimi.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import {
@@ -134,10 +135,6 @@ function firstMeaningfulLine(text, fallback) {
   return line ?? fallback;
 }
 
-function getKimiAvailability(cwd) {
-  return binaryAvailable("kimi", ["--version"], { cwd });
-}
-
 async function getKimiAuthStatus(cwd) {
   const availability = getKimiAvailability(cwd);
   if (!availability.available) {
@@ -177,6 +174,8 @@ async function getKimiAuthStatus(cwd) {
 async function buildSetupReport(cwd, actionsTaken = []) {
   const kimiStatus = getKimiAvailability(cwd);
   const authStatus = await getKimiAuthStatus(cwd);
+  const config = getConfig(resolveWorkspaceRoot(cwd));
+  const reviewGateEnabled = Boolean(config.stopReviewGate);
 
   const nextSteps = [];
   if (!kimiStatus.available) {
@@ -185,11 +184,15 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   if (kimiStatus.available && !authStatus.loggedIn) {
     nextSteps.push("Run `!kimi login`.");
   }
+  if (!reviewGateEnabled) {
+    nextSteps.push("Optional: run `/kimi:setup --enable-review-gate` to require a fresh review before stop.");
+  }
 
   return {
     ready: kimiStatus.available && authStatus.loggedIn,
     kimi: kimiStatus,
     auth: authStatus,
+    reviewGateEnabled,
     actionsTaken,
     nextSteps
   };
@@ -198,11 +201,26 @@ async function buildSetupReport(cwd, actionsTaken = []) {
 async function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json"]
+    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"]
   });
 
+  if (options["enable-review-gate"] && options["disable-review-gate"]) {
+    throw new Error("Choose either --enable-review-gate or --disable-review-gate.");
+  }
+
   const cwd = resolveCommandCwd(options);
-  const finalReport = await buildSetupReport(cwd);
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const actionsTaken = [];
+
+  if (options["enable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", true);
+    actionsTaken.push(`Enabled the stop-time review gate for ${workspaceRoot}.`);
+  } else if (options["disable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", false);
+    actionsTaken.push(`Disabled the stop-time review gate for ${workspaceRoot}.`);
+  }
+
+  const finalReport = await buildSetupReport(cwd, actionsTaken);
   outputResult(options.json ? finalReport : renderSetupReport(finalReport), options.json);
 }
 

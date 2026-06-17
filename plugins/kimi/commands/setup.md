@@ -1,6 +1,6 @@
 ---
-description: Check whether the local Kimi CLI is ready
-argument-hint: '[--json]'
+description: Check whether the local Kimi CLI is ready and optionally toggle the stop-time review gate
+argument-hint: '[--enable-review-gate|--disable-review-gate]'
 allowed-tools: Bash(node:*), AskUserQuestion
 ---
 
@@ -15,6 +15,10 @@ If the result says Kimi is unavailable:
 
 If Kimi is installed but not authenticated:
 - Tell the user to run `!kimi login`.
+
+The stop-time review gate is optional and off by default. Pass
+`--enable-review-gate` to require a fresh Kimi review before a session can stop,
+or `--disable-review-gate` to turn it back off.
 
 Output rules:
 - Present the final setup output to the user.
