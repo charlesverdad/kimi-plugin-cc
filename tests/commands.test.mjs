@@ -166,7 +166,7 @@ test("setup command points users to kimi install and login", () => {
   const setup = read("commands/setup.md");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
 
-  assert.match(setup, /argument-hint:\s*'\[--json\]'/);
+  assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\]'/);
   assert.match(setup, /AskUserQuestion/);
   assert.match(setup, /kimi-companion\.mjs" setup --json \$ARGUMENTS/);
   assert.match(setup, /https:\/\/moonshotai\.github\.io\/kimi-cli\//);
