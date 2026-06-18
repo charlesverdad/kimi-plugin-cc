@@ -75,6 +75,7 @@ export function renderSetupReport(report) {
     "Checks:",
     `- kimi: ${report.kimi.detail}`,
     `- auth: ${report.auth.detail}`,
+    `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
     ""
   ];
 
