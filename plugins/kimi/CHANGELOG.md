@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.1 (unreleased)
+## 1.0.1
 
 - Added a test suite covering the shared library and runtime integration (fake Kimi CLI).
 - Added a version-bump script.

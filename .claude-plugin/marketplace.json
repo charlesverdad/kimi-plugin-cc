@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Kimi CLI plugin to use in Claude Code for delegation and code review.",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "plugins": [
     {
       "name": "kimi",
       "description": "Use Kimi CLI from Claude Code to review code or delegate tasks.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": {
         "name": "charlesverdad"
       },
