@@ -23,7 +23,7 @@ import {
 } from "./lib/job-control.mjs";
 import { getKimiAvailability } from "./lib/kimi.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
-import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
+import { binaryAvailable, runCommand, terminateProcessTree } from "./lib/process.mjs";
 import {
   appendLogLine,
   createJobLogFile,
@@ -231,13 +231,38 @@ function ensureKimiAvailable(cwd) {
   }
 }
 
+let kimiHelpTextCache = null;
+
+function kimiHelpText() {
+  if (kimiHelpTextCache === null) {
+    // runCommand applies the same Windows shell handling as every other kimi call.
+    const result = runCommand("kimi", ["--help"]);
+    kimiHelpTextCache = result.error ? "" : `${result.stdout}\n${result.stderr}`;
+  }
+  return kimiHelpTextCache;
+}
+
+// Kimi CLI 0.38 dropped --quiet and does not advertise --thinking. Passing a flag the
+// installed CLI does not know makes it exit immediately with "error: unknown option",
+// which surfaces as a job that fails a second after launch. Probe --help instead of
+// assuming the flag exists.
+function kimiSupportsFlag(flag) {
+  const help = kimiHelpText();
+  return help ? help.includes(flag) : false;
+}
+
 function buildKimiArgs({ cwd, model, thinking, continueSession, prompt }) {
-  const args = ["--quiet", "--yolo"];
+  const args = [];
+
+  if (kimiSupportsFlag("--quiet")) {
+    args.push("--quiet");
+  }
+  args.push("--yolo");
 
   if (model) {
     args.push("--model", model);
   }
-  if (thinking) {
+  if (thinking && kimiSupportsFlag("--thinking")) {
     args.push("--thinking");
   }
   if (continueSession) {
@@ -248,7 +273,64 @@ function buildKimiArgs({ cwd, model, thinking, continueSession, prompt }) {
   return args;
 }
 
-function runKimi(cwd, args, options = {}) {
+const KIMI_FLAG_ERROR_PATTERNS = [
+  /unknown option '(--[a-z0-9-]+)'/i,
+  /Cannot combine --prompt with (--[a-z0-9-]+)/i
+];
+
+function kimiRejectedFlag(output) {
+  for (const pattern of KIMI_FLAG_ERROR_PATTERNS) {
+    const match = pattern.exec(output);
+    if (match) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+// Options whose next argv entry is a value (model name or prompt), never a flag.
+const KIMI_VALUE_OPTIONS = new Set(["--model", "-p"]);
+
+function withoutFlag(args, flag) {
+  const next = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (KIMI_VALUE_OPTIONS.has(args[i]) && i + 1 < args.length) {
+      next.push(args[i], args[i + 1]);
+      i += 1;
+    } else if (args[i] !== flag) {
+      next.push(args[i]);
+    }
+  }
+  return next;
+}
+
+// The Kimi CLI churns its flags between releases: 0.38 dropped --quiet outright and
+// refuses --yolo alongside -p. Either one makes the process exit in about a second with
+// a usage error, which surfaces here as a job that "failed" with no visible cause. These
+// errors happen before any work starts, so retrying without the flag the CLI named is
+// safe and keeps the plugin working across CLI versions. Only failed runs are inspected:
+// a successful answer may itself quote one of these messages.
+async function runKimi(cwd, args, options = {}) {
+  let attemptArgs = args;
+  let result = await spawnKimi(cwd, attemptArgs, options);
+
+  for (let attempt = 0; attempt < 3 && result.status !== 0; attempt += 1) {
+    const flag = kimiRejectedFlag(`${result.stderr}\n${result.stdout}`);
+    const nextArgs = flag ? withoutFlag(attemptArgs, flag) : attemptArgs;
+    if (nextArgs.length === attemptArgs.length) {
+      break;
+    }
+    attemptArgs = nextArgs;
+    if (options.onProgress) {
+      options.onProgress(`kimi rejected ${flag}; retrying without it.`);
+    }
+    result = await spawnKimi(cwd, attemptArgs, options);
+  }
+
+  return result;
+}
+
+function spawnKimi(cwd, args, options = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn("kimi", args, {
       cwd,

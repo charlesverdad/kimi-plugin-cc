@@ -162,20 +162,39 @@ test("verifyContract fails loudly when a required flag is genuinely absent", () 
 });
 
 test("verifyContract fails loudly when a required subcommand is dropped", () => {
-  // Negative fixture: a future kimi-cli that removed the `info` subcommand.
-  // The command name is colorized (e.g. "\x1b[1;36minfo\x1b[0m"), so target the
+  // Negative fixture: a future kimi-cli that removed the `login` subcommand.
+  // The command name is colorized (e.g. "\x1b[1;36mlogin\x1b[0m"), so target the
   // colored token rather than a plain word boundary.
-  const helpWithoutInfo = FAKE_TOP_LEVEL_HELP.replace(
-    `${C}info${R}`,
+  const helpWithoutLogin = FAKE_TOP_LEVEL_HELP.replace(
+    `${C}login${R}`,
     `${C}gone${R}`
   );
-  // Sanity: the rename actually removed the discoverable `info` token.
-  assert.ok(!tokenizeHelp(helpWithoutInfo).has("info"));
+  // Sanity: the rename actually removed the discoverable `login` token.
+  assert.ok(!tokenizeHelp(helpWithoutLogin).has("login"));
   const fetch = (argv) =>
-    argv[0] === "login" ? FAKE_LOGIN_HELP : helpWithoutInfo;
+    argv[0] === "login" ? FAKE_LOGIN_HELP : helpWithoutLogin;
   const verification = verifyContract(fetch);
   assert.equal(verification.ok, false);
-  assert.ok(verification.missing.some((m) => m.token === "info"));
+  assert.ok(verification.missing.some((m) => m.token === "login"));
+});
+
+test("verifyContract passes Kimi Code CLI help that lacks the optional info, --quiet and --thinking", () => {
+  // Kimi Code CLI 0.38+ dropped `info` and `--quiet` and does not list
+  // `--thinking`; the companion probes `kimi --help` and falls back, so their
+  // absence is reported without failing the contract.
+  const kimiCodeHelp = FAKE_TOP_LEVEL_HELP.replace(`${C}info${R}`, `${C}gone${R}`)
+    .replace(`${C}--quiet${R}`, `${C}--gone${R}`)
+    .replace(`${C}--thinking${R}`, `${C}--gone${R}`)
+    .replace(`${C}--no-thinking${R}`, `${C}--gone${R}`);
+  const fetch = (argv) =>
+    argv[0] === "login" ? FAKE_LOGIN_HELP : kimiCodeHelp;
+  const verification = verifyContract(fetch);
+  assert.equal(verification.ok, true, formatContractReport(verification, "kimi code contract"));
+  assert.deepEqual(
+    verification.optionalMissing.map((m) => m.token).sort(),
+    ["--quiet", "--thinking", "info"]
+  );
+  assert.match(formatContractReport(verification), /--quiet \(flag\): absent \(optional\)/);
 });
 
 test("verifyContract reports a fetch failure as missing, not a crash", () => {
