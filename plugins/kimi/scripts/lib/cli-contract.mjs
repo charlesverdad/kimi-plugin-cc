@@ -27,17 +27,20 @@
  *   ["login", "--help"]    -> `kimi login --help`  (subcommand help)
  *
  * `requires` is the list of tokens that must be present in that help text.
- * Each requirement is `{ token, kind, note }`:
- *   - token: the literal string to look for (flag like "--model" or a
- *            subcommand name like "info").
- *   - kind:  "flag" | "subcommand" (informational / for reporting).
- *   - note:  where in the plugin this is used (informational).
+ * Each requirement is `{ token, kind, note, optional? }`:
+ *   - token:    the literal string to look for (flag like "--model" or a
+ *               subcommand name like "info").
+ *   - kind:     "flag" | "subcommand" (informational / for reporting).
+ *   - note:     where in the plugin this is used (informational).
+ *   - optional: the companion copes when the token is absent, so its absence
+ *               is reported but does not fail the contract.
  *
  * Derived from plugins/kimi/scripts/kimi-companion.mjs:
  *   - getKimiAvailability(): `kimi --version`
- *   - getKimiAuthStatus():   `kimi info`, `kimi login --help`
- *   - buildKimiArgs():       `--quiet`, `--yolo`, `--model`, `--thinking`,
- *                            `--continue`, `-p` (used by task + review runs)
+ *   - getKimiAuthStatus():   `kimi info` (optional), `kimi login --help`
+ *   - buildKimiArgs():       `--yolo`, `--model`, `--continue`, `-p`, plus
+ *                            `--quiet` and `--thinking` only when `kimi --help`
+ *                            lists them (Kimi Code CLI 0.38+ dropped both)
  */
 export const REQUIRED_COMMANDS = [
   {
@@ -46,12 +49,12 @@ export const REQUIRED_COMMANDS = [
     argv: ["--help"],
     requires: [
       { token: "--version", kind: "flag", note: "getKimiAvailability() runs `kimi --version`" },
-      { token: "info", kind: "subcommand", note: "getKimiAuthStatus() runs `kimi info`" },
+      { token: "info", kind: "subcommand", optional: true, note: "getKimiAuthStatus() runs `kimi info`, falling back to `kimi login --help`" },
       { token: "login", kind: "subcommand", note: "getKimiAuthStatus() probes `kimi login --help`; setup suggests `!kimi login`" },
-      { token: "--quiet", kind: "flag", note: "buildKimiArgs() always passes --quiet" },
+      { token: "--quiet", kind: "flag", optional: true, note: "buildKimiArgs() passes --quiet when `kimi --help` lists it" },
       { token: "--yolo", kind: "flag", note: "buildKimiArgs() always passes --yolo" },
       { token: "--model", kind: "flag", note: "buildKimiArgs() passes --model <model> when set" },
-      { token: "--thinking", kind: "flag", note: "buildKimiArgs() passes --thinking for tasks" },
+      { token: "--thinking", kind: "flag", optional: true, note: "buildKimiArgs() passes --thinking for tasks when `kimi --help` lists it" },
       { token: "--continue", kind: "flag", note: "buildKimiArgs() passes --continue to resume" },
       { token: "-p", kind: "flag", note: "buildKimiArgs() passes -p <prompt> (print mode)" }
     ]
@@ -191,14 +194,16 @@ function requirementSatisfied(requirement, tokens) {
  *   return an empty string if the help could not be obtained.
  * @param {object} [options]
  * @param {Array} [options.manifest] Override the manifest (defaults to REQUIRED_COMMANDS).
- * @returns {{ ok: boolean, results: Array, missing: Array }}
+ * @returns {{ ok: boolean, results: Array, missing: Array, optionalMissing: Array }}
  *   `results` has one entry per manifest group with per-requirement status.
- *   `missing` is a flat list of unsatisfied requirements (with group id).
+ *   `missing` is a flat list of unsatisfied required tokens (with group id);
+ *   `optionalMissing` lists absent optional tokens, which do not affect `ok`.
  */
 export function verifyContract(fetchHelp, options = {}) {
   const manifest = options.manifest ?? REQUIRED_COMMANDS;
   const results = [];
   const missing = [];
+  const optionalMissing = [];
 
   for (const group of manifest) {
     let helpText = "";
@@ -213,7 +218,7 @@ export function verifyContract(fetchHelp, options = {}) {
     const checks = group.requires.map((requirement) => {
       const satisfied = !fetchError && requirementSatisfied(requirement, tokens);
       if (!satisfied) {
-        missing.push({
+        (requirement.optional ? optionalMissing : missing).push({
           group: group.id,
           token: requirement.token,
           kind: requirement.kind,
@@ -237,7 +242,8 @@ export function verifyContract(fetchHelp, options = {}) {
   return {
     ok: missing.length === 0,
     results,
-    missing
+    missing,
+    optionalMissing
   };
 }
 
@@ -258,7 +264,7 @@ export function formatContractReport(verification, label = "kimi CLI contract") 
       lines.push(`    ! could not fetch help: ${group.fetchError}`);
     }
     for (const check of group.checks) {
-      const mark = check.satisfied ? "ok" : "MISSING";
+      const mark = check.satisfied ? "ok" : check.optional ? "absent (optional)" : "MISSING";
       lines.push(`    - ${check.token} (${check.kind}): ${mark}`);
     }
   }

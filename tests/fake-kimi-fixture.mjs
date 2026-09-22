@@ -11,9 +11,10 @@ import { writeExecutable } from "./helpers.mjs";
  * broker), the kimi companion spawns the `kimi` CLI DIRECTLY:
  *
  *   - `kimi --version`        -> availability check (binaryAvailable)
+ *   - `kimi --help`           -> flag probe (which optional flags exist)
  *   - `kimi info`             -> auth/availability probe
  *   - `kimi login --help`     -> fallback auth probe
- *   - `kimi --quiet --yolo [--model m] [--thinking] [--continue] -p <prompt>`
+ *   - `kimi [--quiet] --yolo [--model m] [--thinking] [--continue] -p <prompt>`
  *                             -> task/review run; assistant output to stdout
  *
  * So the fake mirrors that command-line contract instead of a wire protocol.
@@ -26,6 +27,13 @@ import { writeExecutable } from "./helpers.mjs";
  *                    reports not-logged-in.
  *   - "failure"      version/info/login succeed but a task/review run exits
  *                    non-zero with a message on stderr.
+ *   - "kimi-code"    Kimi Code CLI 0.38+: `--help` lists neither `--quiet` nor
+ *                    `--thinking`, and a run that combines `--yolo` with `-p`
+ *                    exits 1 with "Cannot combine --prompt with --yolo".
+ *   - "stale-help"   `--help` lists `--quiet` but a run that passes it exits 1
+ *                    with "unknown option '--quiet'".
+ *   - "quotes-error" runs succeed, but the assistant text quotes both usage
+ *                    error messages (as a review of this plugin might).
  *
  * Each task/review invocation appends a JSON line to `<binDir>/kimi-invocations.log`
  * recording the argv it received (and a few decoded fields), so tests can assert
@@ -60,6 +68,13 @@ if (argv[0] === "--version") {
   process.exit(0);
 }
 
+if (argv[0] === "--help") {
+  const optional = BEHAVIOR === "kimi-code" ? [] : ["--quiet", "--thinking"];
+  console.log("Usage: kimi [options] [command]");
+  console.log(["--version", "--model", "--continue", "--yolo", "-p", ...optional].join("\\n"));
+  process.exit(0);
+}
+
 if (argv[0] === "info") {
   if (BEHAVIOR === "auth-missing") {
     console.error("kimi: not logged in. Run \\\`kimi login\\\`.");
@@ -86,7 +101,7 @@ if (argv[0] === "login") {
 }
 
 // --- Task / review run ------------------------------------------------------
-// Real invocation shape: kimi --quiet --yolo [--model m] [--thinking]
+// Real invocation shape: kimi [--quiet] --yolo [--model m] [--thinking]
 //                             [--continue] -p <prompt>
 
 function parseRun(args) {
@@ -126,6 +141,19 @@ recordInvocation({
 if (BEHAVIOR === "failure") {
   process.stderr.write("Fake Kimi failed: simulated run error.\\n");
   process.exit(2);
+}
+
+// Usage errors happen before any work starts, like the real CLI's.
+if (BEHAVIOR === "kimi-code" && run.yolo && run.prompt !== null) {
+  process.stderr.write("error: Cannot combine --prompt with --yolo\\n");
+  process.exit(1);
+}
+if (BEHAVIOR === "stale-help" && run.quiet) {
+  process.stderr.write("error: unknown option '--quiet'\\n");
+  process.exit(1);
+}
+if (BEHAVIOR === "quotes-error") {
+  process.stdout.write("The CLI may print \\"Cannot combine --prompt with --yolo\\" or \\"unknown option '--quiet'\\".\\n");
 }
 
 // Echo a canned assistant message. Include a marker derived from the prompt so

@@ -189,6 +189,57 @@ test("task forwards --model, --thinking, and --continue to the kimi binary", () 
   assert.ok(inv.argv.includes("--continue"));
 });
 
+test("task adapts to Kimi Code CLI: skips unadvertised flags and retries without a rejected --yolo", () => {
+  const rt = setupRuntime("kimi-code");
+  const result = runCompanion(rt, ["task", "--thinking", "Fix the bug"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Fake Kimi assistant response/);
+
+  const invocations = readInvocations(rt.invocationsLog);
+  assert.equal(invocations.length, 2);
+  const [rejected, retried] = invocations;
+  // --quiet and --thinking are not in this CLI's --help, so they are never sent.
+  for (const inv of invocations) {
+    assert.ok(!inv.argv.includes("--quiet"));
+    assert.ok(!inv.argv.includes("--thinking"));
+  }
+  assert.ok(rejected.argv.includes("--yolo"));
+  assert.ok(!retried.argv.includes("--yolo"));
+  assert.equal(retried.prompt, "Fix the bug");
+});
+
+test("task retries without a flag the kimi CLI rejects as unknown", () => {
+  const rt = setupRuntime("stale-help");
+  const result = runCompanion(rt, ["task", "Summarize"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  const invocations = readInvocations(rt.invocationsLog);
+  assert.equal(invocations.length, 2);
+  assert.ok(invocations[0].argv.includes("--quiet"));
+  assert.ok(!invocations[1].argv.includes("--quiet"));
+  assert.ok(invocations[1].argv.includes("--yolo"));
+});
+
+test("task retry drops only the rejected flag, never a prompt equal to it", () => {
+  const rt = setupRuntime("stale-help");
+  const result = runCompanion(rt, ["task", "--quiet"], { input: "" });
+
+  assert.equal(result.status, 0, result.stderr);
+  const invocations = readInvocations(rt.invocationsLog);
+  assert.equal(invocations.length, 2);
+  assert.equal(invocations[1].prompt, "--quiet");
+  assert.deepEqual(invocations[1].argv.slice(-2), ["-p", "--quiet"]);
+});
+
+test("task does not re-run a successful kimi run whose answer quotes a usage error", () => {
+  const rt = setupRuntime("quotes-error");
+  const result = runCompanion(rt, ["task", "Review the retry logic"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readInvocations(rt.invocationsLog).length, 1);
+});
+
 test("task --json reports the run status and raw output", () => {
   const rt = setupRuntime("ok");
   const result = runCompanion(rt, ["task", "--json", "Do a thing"]);
